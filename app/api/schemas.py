@@ -4,10 +4,7 @@ from app.core.config import settings
 
 
 class QueryRequest(BaseModel):
-    query: str = Field(
-        min_length=1,
-        max_length=settings.max_query_length,
-    )
+    query: str = Field(min_length=1, max_length=2000)
     retrieval_limit: int = Field(
         default=5,
         ge=1,
