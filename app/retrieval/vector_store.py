@@ -22,3 +22,8 @@ class VectorStore(ABC):
     ) -> list[RetrievalResult]:
         """Return relevant chunks with similarity scores."""
         raise NotImplementedError
+
+    @abstractmethod
+    def delete_document(self, document_id: str) -> None:
+        """Delete all chunks belonging to a document."""
+        raise NotImplementedError

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import get_rag_pipeline
 from app.api.schemas import QueryRequest, QueryResponse, SourceResponse
@@ -12,10 +12,17 @@ def query_rag(
     request: QueryRequest,
     pipeline: RAGPipeline = Depends(get_rag_pipeline),
 ) -> QueryResponse:
-    result = pipeline.query(
-        query=request.query,
-        retrieval_limit=request.retrieval_limit,
-    )
+    try:
+        result = pipeline.query(
+            query=request.query,
+            retrieval_limit=request.retrieval_limit,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
 
     sources = [
         SourceResponse(

@@ -12,6 +12,20 @@ def index_directory(directory: Path) -> int:
 
     documents = ingestion.ingest_directory(directory)
 
+    # Prepare and validate every document before writing anything
+    # to the vector store.
+    document_chunks: list[tuple[object, list]] = []
+
+    for document in documents:
+        chunks = ingestion.chunk_document(document)
+
+        if not chunks:
+            raise ValueError(
+                f"Document produced no chunks: {document.source}"
+            )
+
+        document_chunks.append((document, chunks))
+
     embedding_provider = BGEEmbeddingProvider(
         model_name=settings.embedding_model,
     )
@@ -29,9 +43,14 @@ def index_directory(directory: Path) -> int:
 
     total_chunks = 0
 
-    for document in documents:
-        chunks = ingestion.chunk_document(document)
-        indexer.index(chunks)
+    for document, chunks in document_chunks:
+        try:
+            indexer.index(chunks)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to index document '{document.source}'"
+            ) from exc
+
         total_chunks += len(chunks)
 
         print(
@@ -50,7 +69,10 @@ def main() -> None:
             f"Document directory does not exist: {directory}"
         )
 
-    total_chunks = index_directory(directory)
+    try:
+        total_chunks = index_directory(directory)
+    except (ValueError, RuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     print(f"Indexed {total_chunks} chunks total.")
 

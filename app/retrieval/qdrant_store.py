@@ -1,5 +1,5 @@
 from pathlib import Path
-from uuid import uuid5, NAMESPACE_URL
+from uuid import NAMESPACE_URL, uuid5
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -28,7 +28,9 @@ class QdrantVectorStore(VectorStore):
 
     def _ensure_collection(self) -> None:
         if self.client.collection_exists(self.collection_name):
-            collection_info = self.client.get_collection(self.collection_name)
+            collection_info = self.client.get_collection(
+                self.collection_name
+            )
 
             existing_size = collection_info.config.params.vectors.size
 
@@ -50,7 +52,12 @@ class QdrantVectorStore(VectorStore):
 
     @staticmethod
     def _point_id(chunk_id: str) -> str:
-        return str(uuid5(NAMESPACE_URL, f"rag-production:{chunk_id}"))
+        return str(
+            uuid5(
+                NAMESPACE_URL,
+                f"rag-production:{chunk_id}",
+            )
+        )
 
     def add(
         self,
@@ -62,7 +69,20 @@ class QdrantVectorStore(VectorStore):
                 "Number of chunks must match number of embeddings."
             )
 
-        points = []
+        if not chunks:
+            return
+
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("Duplicate chunk IDs are not allowed.")
+
+        document_ids = {chunk.document_id for chunk in chunks}
+
+        if len(document_ids) != 1:
+            raise ValueError(
+                "All chunks must belong to the same document."
+            )
 
         for chunk, embedding in zip(chunks, embeddings):
             if len(embedding) != self.vector_size:
@@ -71,23 +91,53 @@ class QdrantVectorStore(VectorStore):
                     f"{len(embedding)}, expected {self.vector_size}."
                 )
 
-            points.append(
-                models.PointStruct(
-                    id=self._point_id(chunk.chunk_id),
-                    vector=embedding,
-                    payload={
-                        "chunk_id": chunk.chunk_id,
-                        "document_id": chunk.document_id,
-                        "content": chunk.content,
-                        "metadata": chunk.metadata,
-                    },
-                )
-            )
+        document_id = chunks[0].document_id
 
-        if points:
-            self.client.upsert(
+        self.delete_document(document_id)
+
+        points = [
+            models.PointStruct(
+                id=self._point_id(chunk.chunk_id),
+                vector=embedding,
+                payload={
+                    "chunk_id": chunk.chunk_id,
+                    "document_id": chunk.document_id,
+                    "content": chunk.content,
+                    "metadata": chunk.metadata,
+                },
+            )
+            for chunk, embedding in zip(chunks, embeddings)
+        ]
+
+        self.client.upsert(
+            collection_name=self.collection_name,
+            points=points,
+        )
+
+    def delete_document(self, document_id: str) -> None:
+        if not document_id:
+            raise ValueError("document_id must not be empty.")
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            limit=10000,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        point_ids = [
+            record.id
+            for record in records
+            if record.payload
+            and record.payload.get("document_id") == document_id
+        ]
+
+        if point_ids:
+            self.client.delete(
                 collection_name=self.collection_name,
-                points=points,
+                points_selector=models.PointIdsList(
+                    points=point_ids,
+                ),
             )
 
     def search(
