@@ -11,6 +11,7 @@ from app.api.routes import router as api_router
 from app.core.config import settings
 from app.core.container import create_rag_pipeline
 from app.core.logging import configure_logging
+from app.core.metrics import metrics
 
 
 configure_logging()
@@ -38,11 +39,17 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-app.add_exception_handler(Exception, internal_exception_handler)
+app.add_exception_handler(
+    Exception,
+    internal_exception_handler,
+)
 
 
 @app.middleware("http")
-async def request_observability(request: Request, call_next):
+async def request_observability(
+    request: Request,
+    call_next,
+):
     request_id = str(uuid4())
     request.state.request_id = request_id
 
@@ -58,9 +65,22 @@ async def request_observability(request: Request, call_next):
         },
     )
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        metrics.increment("requests_total")
+        metrics.increment("requests_failed")
+        raise
 
-    duration_ms = round((perf_counter() - start) * 1000, 2)
+    duration_ms = round(
+        (perf_counter() - start) * 1000,
+        2,
+    )
+
+    metrics.increment("requests_total")
+
+    if response.status_code >= 500:
+        metrics.increment("requests_failed")
 
     logger.info(
         "request_completed",
@@ -75,10 +95,8 @@ async def request_observability(request: Request, call_next):
     )
 
     response.headers["X-Request-ID"] = request_id
+
     return response
-
-
-app.include_router(api_router)
 
 
 @app.get("/health")
@@ -87,3 +105,11 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "environment": settings.environment,
     }
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> dict[str, int]:
+    return metrics.snapshot()
+
+
+app.include_router(api_router)

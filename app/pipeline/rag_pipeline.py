@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+from app.core.metrics import metrics
 from app.generation.models import AnswerSource, GeneratedAnswer
 from app.generation.provider import GenerationProvider
 from app.grounding.models import GroundingResult
@@ -57,13 +58,17 @@ class RAGPipeline:
         if retrieval_limit <= 0:
             raise ValueError("retrieval_limit must be greater than 0.")
 
+        metrics.increment("rag_queries_total")
+
         evidence = self.retriever.search(
             query=query,
             limit=retrieval_limit,
         )
 
-        # No retrieved evidence means the model must not be called.
         if not evidence:
+            metrics.increment("retrieval_empty_total")
+            metrics.increment("rag_refusals_total")
+
             return self._refusal(evidence=[])
 
         generated_answer = self.generator.generate(
@@ -76,9 +81,9 @@ class RAGPipeline:
             evidence=evidence,
         )
 
-        # Critical closed-world boundary:
-        # an answer that cannot be grounded is never returned.
         if not grounding.grounded:
+            metrics.increment("rag_refusals_total")
+
             return RAGResponse(
                 answer=GeneratedAnswer(
                     answer=INSUFFICIENT_EVIDENCE_MESSAGE,
@@ -87,6 +92,8 @@ class RAGPipeline:
                 grounding=grounding,
                 evidence=evidence,
             )
+
+        metrics.increment("rag_grounded_total")
 
         sources = self._build_sources(
             evidence=evidence,
