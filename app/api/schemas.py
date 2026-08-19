@@ -4,10 +4,13 @@ from app.core.config import settings
 
 
 class QueryRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=2000)
+    query: str = Field(
+        min_length=1,
+        max_length=settings.max_query_length,
+    )
     retrieval_limit: int = Field(
         default=5,
-        ge=1,
+        gt=0,
         le=settings.max_retrieval_limit,
     )
 
@@ -17,7 +20,7 @@ class QueryRequest(BaseModel):
         value = value.strip()
 
         if not value:
-            raise ValueError("query must not be empty")
+            raise ValueError("Query must not be empty.")
 
         return value
 
@@ -26,7 +29,7 @@ class SourceResponse(BaseModel):
     chunk_id: str
     document_id: str
     content: str
-    metadata: dict[str, str]
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class QueryResponse(BaseModel):
